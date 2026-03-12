@@ -14,6 +14,7 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <!-- Required for background location on Android 10+ -->
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
 
     <application
         android:allowBackup="true"
@@ -34,6 +35,12 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Crash detection using accelerometer sensors to monitor for sudden impacts and provide emergency assistance even when the app is in the background."/>
         </service>
+
+        <activity
+            android:name=".FirstAidActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"/>
 
         <activity
             android:name=".MainActivity"
