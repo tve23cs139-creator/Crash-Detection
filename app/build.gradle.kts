@@ -47,8 +47,12 @@ dependencies {
     
     // Added for extended material icons like HealthAndSafety
     implementation("androidx.compose.material:material-icons-extended")
-    
+
     implementation("com.google.android.gms:play-services-location:21.3.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    implementation(platform("com.google.firebase:firebase-bom:33.5.1"))
+    implementation("com.google.firebase:firebase-firestore-ktx")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

@@ -21,15 +21,20 @@ class CrashMonitorService : Service() {
     private var countdownThread: Thread? = null
     private lateinit var crashDetector: CrashDetector
     private lateinit var locationHelper: LocationHelper
+    private lateinit var severityClassifier: SeverityClassifier
+    private lateinit var crashEventLogger: CrashEventLogger
     private var wakeLock: PowerManager.WakeLock? = null
     private var toneGenerator: ToneGenerator? = null
     private var currentSeverity: String = ""
+    private var latestSegment: CrashSegment? = null
 
     override fun onCreate() {
         super.onCreate()
 
         toneGenerator = ToneGenerator(AudioManager.STREAM_ALARM, 100)
         locationHelper = LocationHelper(this)
+        severityClassifier = SeverityClassifier(this)
+        crashEventLogger = CrashEventLogger(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CrashDetection:SensorWakeLock").apply {
@@ -38,9 +43,9 @@ class CrashMonitorService : Service() {
         }
 
         createNotificationChannel()
-        
+
         val notification = buildNotification("Crash monitoring active")
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 1,
@@ -51,9 +56,9 @@ class CrashMonitorService : Service() {
             startForeground(1, notification)
         }
 
-        crashDetector = CrashDetector(this) { gForce ->
+        crashDetector = CrashDetector(this) { segment ->
             if (!countdownActive) {
-                startCrashCountdown(gForce)
+                startCrashCountdown(segment)
             }
         }
 
@@ -69,7 +74,6 @@ class CrashMonitorService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // Stop the service when the app is swiped away from the recents list
         stopSelf()
     }
 
@@ -138,18 +142,11 @@ class CrashMonitorService : Service() {
         const val EXTRA_SEVERITY = "extra_severity"
     }
 
-    private fun classifySeverity(gForce: Float): String {
-        return when {
-            gForce >= 25.0f -> "EXTREME"
-            gForce >= 12.0f -> "SEVERE"
-            else -> "MINOR"
-        }
-    }
-
-    private fun startCrashCountdown(gForce: Float) {
+    private fun startCrashCountdown(segment: CrashSegment) {
         countdownActive = true
         countdownSeconds = 10
-        currentSeverity = classifySeverity(gForce)
+        latestSegment = segment
+        currentSeverity = severityClassifier.classify(segment)
 
         countdownThread = Thread {
             while (countdownSeconds > 0 && countdownActive) {
@@ -159,47 +156,57 @@ class CrashMonitorService : Service() {
                 toneGenerator?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200)
                 try {
                     Thread.sleep(1000)
-                } catch (e: InterruptedException) {
+                } catch (_: InterruptedException) {
                     break
                 }
                 countdownSeconds--
             }
 
             if (countdownActive) {
-                onCrashConfirmed(gForce)
+                onCrashConfirmed()
             }
         }
         countdownThread?.start()
     }
 
-    private fun onCrashConfirmed(gForce: Float) {
-        val msg = "$currentSeverity crash CONFIRMED (G=$gForce)"
+    private fun onCrashConfirmed() {
+        val segment = latestSegment ?: return
+        val msg = "$currentSeverity crash CONFIRMED (G=${segment.peakGForce})"
         updateNotification(msg, true)
         sendUpdateBroadcast(msg, 0, true, currentSeverity)
-        
+
         stopSound()
         toneGenerator?.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 10000)
-        
-        val emergencyNumber = ContactStore.get(this)
-        
-        if (emergencyNumber != null) {
-            locationHelper.get { lat, lon ->
-                val locationText = if (lat != null && lon != null) {
-                    "Location: https://www.google.com/maps?q=$lat,$lon"
-                } else {
-                    "Location: Unknown"
-                }
-                
-                val smsText = "EMERGENCY: A $currentSeverity vehicle crash (G-Force: $gForce) has been detected. $locationText"
-                
-                try {
+
+        locationHelper.get { lat, lon ->
+            val contacts = ContactStore.getAll(this)
+            val locationText = if (lat != null && lon != null) {
+                "Location: https://www.google.com/maps?q=$lat,$lon"
+            } else {
+                "Location: Unknown"
+            }
+
+            val smsText = "EMERGENCY: A $currentSeverity vehicle crash (G-Force: ${segment.peakGForce}) has been detected. $locationText"
+
+            contacts.forEach { emergencyNumber ->
+                runCatching {
                     SmsHelper.send(emergencyNumber, smsText)
-                    android.util.Log.d("CrashService", "SMS sent to $emergencyNumber")
-                } catch (e: Exception) {
-                    android.util.Log.e("CrashService", "Failed to send SMS: ${e.message}")
                 }
             }
+
+            crashEventLogger.logCrash(
+                timestamp = System.currentTimeMillis(),
+                severity = currentSeverity,
+                latitude = lat,
+                longitude = lon
+            )
         }
+
+        val firstAidIntent = Intent(this, FirstAidActivity::class.java).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(EXTRA_SEVERITY, currentSeverity)
+        }
+        startActivity(firstAidIntent)
     }
 
     private fun sendUpdateBroadcast(message: String, seconds: Int, confirmed: Boolean, severity: String) {

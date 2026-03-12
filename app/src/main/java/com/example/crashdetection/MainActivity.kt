@@ -22,14 +22,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Warning
@@ -38,14 +42,18 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -80,7 +88,7 @@ class MainActivity : ComponentActivity() {
     ) { permissions ->
         val smsGranted = permissions[Manifest.permission.SEND_SMS] ?: false
         val locationGranted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] ?: false
-        
+
         if (smsGranted && locationGranted) {
             startCrashService()
             checkBackgroundLocationPermission()
@@ -91,7 +99,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         volumeControlStream = AudioManager.STREAM_ALARM
-        ContactStore.save(this, "8075459692")
 
         checkAndRequestPermissions()
         enableEdgeToEdge()
@@ -103,6 +110,9 @@ class MainActivity : ComponentActivity() {
                         message = message,
                         countdown = countdown,
                         isConfirmed = isConfirmed,
+                        contacts = ContactStore.getAll(this),
+                        onAddContact = { ContactStore.add(this, it) },
+                        onRemoveContact = { ContactStore.remove(this, it) },
                         onCancel = {
                             val intent = Intent(this, CrashMonitorService::class.java).apply {
                                 action = CrashMonitorService.ACTION_CANCEL_COUNTDOWN
@@ -136,8 +146,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkBackgroundLocationPermission() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) 
-            != PackageManager.PERMISSION_GRANTED) {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
             requestPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
         }
     }
@@ -164,13 +175,19 @@ fun CrashScreen(
     message: String,
     countdown: Int,
     isConfirmed: Boolean,
+    contacts: List<String>,
+    onAddContact: (String) -> Unit,
+    onRemoveContact: (String) -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var newContact by remember { mutableStateOf("") }
+    val contactList = remember(contacts) { mutableStateListOf<String>().apply { addAll(contacts) } }
+
     val backgroundColor by animateColorAsState(
         targetValue = when {
-            isConfirmed -> Color(0xFFB71C1C) // Deep Red
-            countdown > 0 -> Color(0xFFFF8F00) // Vibrant Orange
+            isConfirmed -> Color(0xFFB71C1C)
+            countdown > 0 -> Color(0xFFFF8F00)
             else -> MaterialTheme.colorScheme.background
         },
         animationSpec = tween(durationMillis = 500), label = ""
@@ -187,41 +204,56 @@ fun CrashScreen(
                 .fillMaxSize()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
+            verticalArrangement = Arrangement.Top
         ) {
+            Spacer(modifier = Modifier.height(24.dp))
             StatusIcon(countdown, isConfirmed)
-
-            Spacer(modifier = Modifier.height(32.dp))
-
+            Spacer(modifier = Modifier.height(24.dp))
             Text(
                 text = when {
                     isConfirmed -> "CRASH CONFIRMED"
                     countdown > 0 -> "POSSIBLE CRASH"
                     else -> "System Active"
                 },
-                fontSize = 36.sp,
+                fontSize = 32.sp,
                 fontWeight = FontWeight.ExtraBold,
                 color = contentColor,
                 textAlign = TextAlign.Center
             )
-            
-            Spacer(modifier = Modifier.height(16.dp))
-            
+
+            Spacer(modifier = Modifier.height(12.dp))
+
             Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = contentColor.copy(alpha = 0.1f)
-                ),
+                colors = CardDefaults.cardColors(containerColor = contentColor.copy(alpha = 0.1f)),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
                     text = message,
-                    fontSize = 18.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.Medium,
                     color = contentColor,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(16.dp).fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
                 )
             }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            EmergencyContactManager(
+                contacts = contactList,
+                contentColor = contentColor,
+                onAdd = {
+                    onAddContact(it)
+                    contactList.clear(); contactList.addAll(contacts + it)
+                },
+                onRemove = {
+                    onRemoveContact(it)
+                    contactList.remove(it)
+                },
+                newContact = newContact,
+                onContactChanged = { newContact = it }
+            )
 
             AnimatedVisibility(
                 visible = countdown > 0,
@@ -229,34 +261,86 @@ fun CrashScreen(
                 exit = fadeOut()
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Spacer(modifier = Modifier.height(48.dp))
-                    
+                    Spacer(modifier = Modifier.height(24.dp))
                     Box(
                         contentAlignment = Alignment.Center,
                         modifier = Modifier
-                            .size(150.dp)
+                            .size(130.dp)
                             .clip(CircleShape)
                             .background(contentColor.copy(alpha = 0.2f))
                     ) {
                         Text(
                             text = "$countdown",
-                            fontSize = 80.sp,
+                            fontSize = 72.sp,
                             fontWeight = FontWeight.Black,
                             color = contentColor
                         )
                     }
-                    
-                    Spacer(modifier = Modifier.height(48.dp))
-                    
+
+                    Spacer(modifier = Modifier.height(24.dp))
+
                     Button(
                         onClick = onCancel,
                         colors = ButtonDefaults.buttonColors(
                             containerColor = Color.White,
                             contentColor = Color.Black
                         ),
-                        modifier = Modifier.height(56.dp).fillMaxWidth()
+                        modifier = Modifier
+                            .height(56.dp)
+                            .fillMaxWidth()
                     ) {
                         Text("I'M SAFE (CANCEL)", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EmergencyContactManager(
+    contacts: List<String>,
+    contentColor: Color,
+    onAdd: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    newContact: String,
+    onContactChanged: (String) -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = contentColor.copy(alpha = 0.08f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text("Emergency Contacts", color = contentColor, fontWeight = FontWeight.Bold)
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = newContact,
+                    onValueChange = onContactChanged,
+                    modifier = Modifier.weight(1f),
+                    label = { Text("Phone") },
+                    singleLine = true
+                )
+                Spacer(modifier = Modifier.height(0.dp).padding(4.dp))
+                Button(onClick = {
+                    onAdd(newContact)
+                    onContactChanged("")
+                }) {
+                    Text("Add")
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            LazyColumn(modifier = Modifier.height(120.dp)) {
+                items(contacts) { number ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(number, color = contentColor)
+                        IconButton(onClick = { onRemove(number) }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = contentColor)
+                        }
                     }
                 }
             }
@@ -271,7 +355,7 @@ fun StatusIcon(countdown: Int, isConfirmed: Boolean) {
         countdown > 0 -> Icons.Default.Notifications
         else -> Icons.Default.Info
     }
-    
+
     val iconColor = when {
         isConfirmed -> Color.White
         countdown > 0 -> Color.White
