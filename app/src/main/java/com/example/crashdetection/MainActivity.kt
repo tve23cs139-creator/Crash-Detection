@@ -92,6 +92,7 @@ class MainActivity : ComponentActivity() {
 
         volumeControlStream = AudioManager.STREAM_ALARM
         ContactStore.save(this, "9562153025")
+        FirebaseLogger.init(this)
 
         checkAndRequestPermissions()
         enableEdgeToEdge()

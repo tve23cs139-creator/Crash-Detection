@@ -229,7 +229,23 @@ class CrashMonitorService : Service() {
                 } catch (e: Exception) {
                     Log.e("CrashService", "Failed to send SMS: ${e.message}")
                 }
+
+                // Log crash event to Firebase Realtime Database
+                FirebaseLogger.logWithTimestamp(
+                    maxG = gForce,
+                    severity = currentSeverity,
+                    latitude = lat,
+                    longitude = lon
+                )
             }
+        } else {
+            // Still log the crash event even if no emergency number is set
+            FirebaseLogger.logWithTimestamp(
+                maxG = gForce,
+                severity = currentSeverity,
+                latitude = null,
+                longitude = null
+            )
         }
     }
 

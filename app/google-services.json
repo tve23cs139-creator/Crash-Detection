@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "809569899144",
+    "firebase_url": "https://crash-detection-6785b-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "crash-detection-6785b",
+    "storage_bucket": "crash-detection-6785b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:809569899144:android:842c04f4ca25461cc2c53d",
+        "android_client_info": {
+          "package_name": "com.example.crashdetection"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBVUfs7UlMGLbCWy4INxhmqrRmylZjMfe8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
