@@ -12,9 +12,9 @@ object FirebaseLogger {
     private const val DATABASE_URL =
         "https://crash-detection-6785b-default-rtdb.asia-southeast1.firebasedatabase.app"
 
-    // Use values from your Firebase project / google-services.json.
-    private const val API_KEY = "AIzaSyBk1jg2jDu1B7Fa1eL-0KXW5rK9AVJmJ5Y"
-    private const val APPLICATION_ID = "1:809569899144:web:f0381f7af19fd723c2c53d"
+    // Fill these with the Android app's Firebase credentials.
+    private const val API_KEY = "REPLACE_WITH_FIREBASE_API_KEY"
+    private const val APPLICATION_ID = "REPLACE_WITH_FIREBASE_APP_ID"
     private const val PROJECT_ID = "crash-detection-6785b"
 
     private var appContext: Context? = null
@@ -24,14 +24,13 @@ object FirebaseLogger {
     }
 
     fun log(event: CrashEvent) {
-        val context = appContext
+        val context = appContext?.applicationContext
         if (context == null) {
             Log.e(TAG, "FirebaseLogger not initialized. Call FirebaseLogger.init(context) first.")
             return
         }
 
         try {
-            // Check if Firebase is already initialized, if not, initialize it
             if (FirebaseApp.getApps(context).isEmpty()) {
                 val options = FirebaseOptions.Builder()
                     .setApiKey(API_KEY)
@@ -43,7 +42,6 @@ object FirebaseLogger {
                 Log.d(TAG, "Firebase manually initialized")
             }
 
-            // Get the default Firebase instance with explicit database URL
             val firebaseApp = FirebaseApp.getInstance()
             val databaseRef = FirebaseDatabase.getInstance(firebaseApp, DATABASE_URL).reference
             val key = databaseRef.child(REPORTED_ACCIDENTS_NODE).push().key

@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
     private var message by mutableStateOf("Monitoring for crashes...")
     private var countdown by mutableIntStateOf(-1)
     private var isConfirmed by mutableStateOf(false)
+    private val simulationReceiver = SimulationReceiver()
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -93,6 +94,12 @@ class MainActivity : ComponentActivity() {
         volumeControlStream = AudioManager.STREAM_ALARM
         ContactStore.save(this, "9562153025")
         FirebaseLogger.init(this)
+        ContextCompat.registerReceiver(
+            this,
+            simulationReceiver,
+            IntentFilter(SimulationReceiver.ACTION_SIMULATE_CRASH),
+            ContextCompat.RECEIVER_EXPORTED
+        )
 
         checkAndRequestPermissions()
         enableEdgeToEdge()
@@ -157,6 +164,11 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         super.onStop()
         unregisterReceiver(receiver)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(simulationReceiver)
     }
 }
 

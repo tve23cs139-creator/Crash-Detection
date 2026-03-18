@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.media.AudioManager
 import android.media.ToneGenerator
@@ -27,6 +29,23 @@ class CrashMonitorService : Service() {
     private var toneGenerator: ToneGenerator? = null
     private var currentSeverity: String = ""
     private var lastDetectedGForce: Float = 0f
+    private val simulateCrashReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != ACTION_SIMULATE_CRASH) return
+
+            val maxG = intent.getFloatExtra(EXTRA_MAX_G, 0f)
+            val severity = intent.getStringExtra(EXTRA_SIM_SEVERITY) ?: "UNKNOWN"
+
+            locationHelper.get { lat, lon ->
+                FirebaseLogger.logWithTimestamp(
+                    maxG = maxG,
+                    severity = severity,
+                    latitude = lat ?: MOCK_LATITUDE,
+                    longitude = lon ?: MOCK_LONGITUDE
+                )
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -71,6 +90,13 @@ class CrashMonitorService : Service() {
         }
 
         crashDetector.start()
+
+        val filter = IntentFilter(ACTION_SIMULATE_CRASH)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(simulateCrashReceiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(simulateCrashReceiver, filter)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -86,6 +112,7 @@ class CrashMonitorService : Service() {
     }
 
     override fun onDestroy() {
+        unregisterReceiver(simulateCrashReceiver)
         crashDetector.stop()
         stopSound()
         toneGenerator?.release()
@@ -147,10 +174,15 @@ class CrashMonitorService : Service() {
         const val CHANNEL_ID = "crash_monitor_channel"
         const val ACTION_CRASH_UPDATE = "com.example.crashdetection.CRASH_UPDATE"
         const val ACTION_CANCEL_COUNTDOWN = "com.example.crashdetection.CANCEL_COUNTDOWN"
+        const val ACTION_SIMULATE_CRASH = "com.example.crashdetection.SIMULATE_CRASH"
         const val EXTRA_MESSAGE = "extra_message"
         const val EXTRA_COUNTDOWN = "extra_countdown"
         const val EXTRA_IS_CONFIRMED = "extra_confirmed"
         const val EXTRA_SEVERITY = "extra_severity"
+        const val EXTRA_MAX_G = "maxG"
+        const val EXTRA_SIM_SEVERITY = "severity"
+        private const val MOCK_LATITUDE = 10.79
+        private const val MOCK_LONGITUDE = 76.27
     }
 
     private fun classifySeverity(gForce: Float): String {
