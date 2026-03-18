@@ -91,7 +91,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         volumeControlStream = AudioManager.STREAM_ALARM
-        ContactStore.save(this, "8075459692")
+        ContactStore.save(this, "9562153025")
 
         checkAndRequestPermissions()
         enableEdgeToEdge()

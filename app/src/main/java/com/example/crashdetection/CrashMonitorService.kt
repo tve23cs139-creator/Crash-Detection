@@ -13,17 +13,20 @@ import android.media.ToneGenerator
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 class CrashMonitorService : Service() {
     private var countdownActive = false
     private var countdownSeconds = 10
     private var countdownThread: Thread? = null
-    private lateinit var crashDetector: CrashDetector
+    private lateinit var crashDetector: SensorFusionCrashDetector
     private lateinit var locationHelper: LocationHelper
+    private val severityModel = CrashSeverityModel()
     private var wakeLock: PowerManager.WakeLock? = null
     private var toneGenerator: ToneGenerator? = null
     private var currentSeverity: String = ""
+    private var lastDetectedGForce: Float = 0f
 
     override fun onCreate() {
         super.onCreate()
@@ -32,28 +35,38 @@ class CrashMonitorService : Service() {
         locationHelper = LocationHelper(this)
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "CrashDetection:SensorWakeLock").apply {
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "CrashDetection:SensorWakeLock"
+        ).apply {
             setReferenceCounted(false)
             acquire(10 * 60 * 1000L)
         }
 
         createNotificationChannel()
-        
         val notification = buildNotification("Crash monitoring active")
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                1,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
-            )
+            startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
             startForeground(1, notification)
         }
 
-        crashDetector = CrashDetector(this) { gForce ->
+        try {
+            severityModel.loadModel(this, "model.tflite")
+            Log.d("CrashService", "TFLite model loaded")
+        } catch (e: Exception) {
+            Log.w("CrashService", "TFLite model not available, using rule-based fallback: ${e.message}")
+        }
+
+        crashDetector = SensorFusionCrashDetector(
+            context = this,
+            impactGThreshold = 5.0f,
+            gyroThresholdRadPerSec = 3.0f,
+            confirmationWindowMs = 300L
+        ) { crashEvent ->
             if (!countdownActive) {
-                startCrashCountdown(gForce)
+                startCrashCountdown(crashEvent)
             }
         }
 
@@ -69,7 +82,6 @@ class CrashMonitorService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // Stop the service when the app is swiped away from the recents list
         stopSelf()
     }
 
@@ -77,6 +89,7 @@ class CrashMonitorService : Service() {
         crashDetector.stop()
         stopSound()
         toneGenerator?.release()
+        severityModel.close()
         wakeLock?.let {
             if (it.isHeld) it.release()
         }
@@ -90,7 +103,9 @@ class CrashMonitorService : Service() {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
         val pendingIntent = PendingIntent.getActivity(
-            this, 0, intent,
+            this,
+            0,
+            intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -146,27 +161,42 @@ class CrashMonitorService : Service() {
         }
     }
 
-    private fun startCrashCountdown(gForce: Float) {
+    private fun mlSeverityOrFallback(event: SensorFusionCrashDetector.CrashEvent): String {
+        return try {
+            val modelInput = severityModel.preprocessSensorWindow(event.samples)
+            when (severityModel.runInference(modelInput)) {
+                CrashSeverityModel.Severity.EXTREME -> "EXTREME"
+                CrashSeverityModel.Severity.SEVERE -> "SEVERE"
+                CrashSeverityModel.Severity.MINOR -> "MINOR"
+            }
+        } catch (e: Exception) {
+            Log.w("CrashService", "Inference failed, using rule severity fallback: ${e.message}")
+            classifySeverity(event.maxGForce)
+        }
+    }
+
+    private fun startCrashCountdown(event: SensorFusionCrashDetector.CrashEvent) {
         countdownActive = true
         countdownSeconds = 10
-        currentSeverity = classifySeverity(gForce)
+        lastDetectedGForce = event.maxGForce
+        currentSeverity = mlSeverityOrFallback(event)
 
         countdownThread = Thread {
             while (countdownSeconds > 0 && countdownActive) {
-                val msg = "Possible $currentSeverity crash detected — confirming in $countdownSeconds s"
+                val msg = "Possible $currentSeverity crash detected - confirming in $countdownSeconds s"
                 updateNotification(msg, true)
                 sendUpdateBroadcast(msg, countdownSeconds, false, currentSeverity)
                 toneGenerator?.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 200)
                 try {
                     Thread.sleep(1000)
-                } catch (e: InterruptedException) {
+                } catch (_: InterruptedException) {
                     break
                 }
                 countdownSeconds--
             }
 
             if (countdownActive) {
-                onCrashConfirmed(gForce)
+                onCrashConfirmed(lastDetectedGForce)
             }
         }
         countdownThread?.start()
@@ -176,12 +206,12 @@ class CrashMonitorService : Service() {
         val msg = "$currentSeverity crash CONFIRMED (G=$gForce)"
         updateNotification(msg, true)
         sendUpdateBroadcast(msg, 0, true, currentSeverity)
-        
+
         stopSound()
         toneGenerator?.startTone(ToneGenerator.TONE_CDMA_EMERGENCY_RINGBACK, 10000)
-        
+
         val emergencyNumber = ContactStore.get(this)
-        
+
         if (emergencyNumber != null) {
             locationHelper.get { lat, lon ->
                 val locationText = if (lat != null && lon != null) {
@@ -189,14 +219,15 @@ class CrashMonitorService : Service() {
                 } else {
                     "Location: Unknown"
                 }
-                
-                val smsText = "EMERGENCY: A $currentSeverity vehicle crash (G-Force: $gForce) has been detected. $locationText"
-                
+
+                val smsText =
+                    "EMERGENCY: A $currentSeverity vehicle crash (G-Force: $gForce) has been detected. $locationText"
+
                 try {
                     SmsHelper.send(emergencyNumber, smsText)
-                    android.util.Log.d("CrashService", "SMS sent to $emergencyNumber")
+                    Log.d("CrashService", "SMS sent to $emergencyNumber")
                 } catch (e: Exception) {
-                    android.util.Log.e("CrashService", "Failed to send SMS: ${e.message}")
+                    Log.e("CrashService", "Failed to send SMS: ${e.message}")
                 }
             }
         }
