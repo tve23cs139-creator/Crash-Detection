@@ -3,6 +3,7 @@ import { ref, onValue } from 'firebase/database';
 import { database } from './firebase';
 import { AlertTriangle, TrendingUp, AlertCircle, MapPin, Clock, Zap } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import MapComponent from './MapComponent';
 
 export default function App() {
   const [incidents, setIncidents] = useState([]);
@@ -62,6 +63,16 @@ export default function App() {
 
   // Get last 10 incidents
   const recentIncidents = incidents.slice(0, 10);
+  const latestIncident = incidents[0];
+  const activeCrash = latestIncident
+    ? {
+        id: latestIncident.id,
+        timestamp: latestIncident.timestamp,
+        severity: latestIncident.severity,
+        lat: Number(latestIncident.latitude),
+        lng: Number(latestIncident.longitude),
+      }
+    : null;
 
   // Format timestamp
   const formatTime = (timestamp) => {
@@ -183,6 +194,15 @@ export default function App() {
                 No data available
               </div>
             )}
+          </div>
+
+          {/* Smart Rescue Map */}
+          <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-xl p-6 mb-8">
+            <h2 className="text-xl font-bold mb-2">Smart Rescue Dashboard</h2>
+            <p className="text-slate-400 text-sm mb-4">
+              Dynamic hospital discovery, interactive rescue routes, and dispatch workflow for the latest crash.
+            </p>
+            <MapComponent crash={activeCrash} />
           </div>
 
           {/* Table Row */}
