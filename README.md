@@ -1,135 +1,188 @@
+# Crash Detection System
 
-# Crash Detection Android App 🚗💥
+End-to-end crash monitoring system with:
+- Android app for on-device crash detection + emergency SMS alerts
+- Firebase Realtime Database for incident logging
+- React dashboard for live SOC monitoring and rescue dispatch visualization
+- Python ML pipeline for synthetic data generation and severity model training
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
-![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
-![GitHub stars](https://img.shields.io/github/stars/your-username/your-repo?style=social)
-![GitHub forks](https://img.shields.io/github/forks/your-username/your-repo?style=social)
+## Repository Structure
 
-A native Android application designed for automatic vehicle crash detection and emergency alert notification. The app runs a persistent background service to monitor the device's accelerometer for sudden, high-G-force impacts and, if a likely crash is detected, automatically sends an SMS alert with the user's location to a pre-configured emergency contact.
+```text
+Crash-Detection/
+  app/                 Android app (Kotlin + Compose + TFLite + Firebase logging)
+  dashboard/           React/Vite SOC dashboard (Firebase + Google Maps)
+  ml/                  Dataset generation + model training/export scripts
+  README.md
+```
 
-## 📜 Project Description
+## Full Functionality Breakdown
 
-The primary goal of this project is to provide a safety net for drivers. In the event of a serious accident that might leave the driver incapacitated, this app can automatically call for help. It uses the built-in accelerometer to detect forces consistent with a vehicle collision. To prevent false alarms, it initiates a 10-second countdown with audible and visual warnings, giving the user a chance to cancel the alert if they are safe. If the alert is not canceled, the app sends a detailed SMS message, including the severity of the impact and a Google Maps link of their current location, to an emergency contact.
+### 1) Android Crash Detection App (`app/`)
 
-## ✨ Features
+Core runtime flow:
+1. `MainActivity` requests permissions (SMS, location, notifications), initializes logging, and starts `CrashMonitorService`.
+2. `CrashMonitorService` runs as a foreground service with a persistent notification and acquires a partial wake lock.
+3. `SensorFusionCrashDetector` continuously listens to accelerometer + gyroscope data (`SENSOR_DELAY_GAME`).
+4. Detection logic uses staged confirmation:
+   - impact threshold (`gForce > 5.0`)
+   - orientation change threshold (`gyro magnitude > 3.0 rad/s`)
+   - confirmation window (`300 ms`)
+5. On detected candidate crash:
+   - starts 10s countdown
+   - sends UI updates to activity via broadcast
+   - plays warning tones
+6. If user cancels, monitoring resumes.
+7. If not canceled:
+   - severity is predicted with TFLite model (`model.tflite`) when available
+   - fallback severity rules are used if model fails/unavailable
+   - emergency SMS is sent with Google Maps location URL
+   - event is logged to Firebase under `reported_accidents`
 
-- **Automatic Crash Detection**: Utilizes the accelerometer to detect high G-force impacts (threshold > 5 Gs).
-- **Background Monitoring**: Runs as a persistent Foreground Service to ensure monitoring continues even when the app is not in the foreground.
-- **Configurable Countdown**: A 10-second countdown with an audible alarm begins after a potential crash is detected, allowing the user to cancel false alarms.
-- **Emergency SMS Alerts**: Automatically sends an SMS to a designated emergency contact if the countdown is not canceled.
-- **Location Sharing**: The alert SMS includes the device's latitude and longitude as a Google Maps link for easy location pinpointing.
-- **Crash Severity Classification**: Classifies the impact as "MINOR", "SEVERE", or "EXTREME" based on the measured G-force.
-- **Reactive UI**: A clean, simple UI built with Jetpack Compose that provides real-time status updates (e.g., "Monitoring", "Possible Crash Detected", "Crash Confirmed").
-- **Wake Lock Management**: Ensures the CPU remains active to process sensor data, even when the device screen is off.
+Main Android components:
+- `MainActivity.kt`: UI state, permission flow, cancel action, registers simulation receiver.
+- `CrashMonitorService.kt`: long-running monitoring service, countdown/alert logic, SMS + DB logging.
+- `SensorFusionCrashDetector.kt`: sensor fusion detector (accel + gyro).
+- `CrashSeverityModel.kt`: TFLite load, health check, preprocessing, inference.
+- `LocationHelper.kt`: fused last known location fetch.
+- `SmsHelper.kt`: sends SMS with `SmsManager`.
+- `FirebaseLogger.kt`: writes crash payloads to Firebase Realtime Database.
+- `ContactStore.kt`: stores emergency number in SharedPreferences.
+- `SimulationReceiver.kt`: accepts simulated crash broadcasts for logging.
 
-## ⚙️ How It Works
+Detection thresholds and timing currently in code:
+- Impact threshold: `5.0 G`
+- Gyroscope threshold: `3.0 rad/s`
+- Confirmation window: `300 ms`
+- Debounce between events: `1500 ms`
+- User cancel countdown: `10 s`
 
-1.  **Service Initialization**: Upon granting necessary permissions, the app starts the `CrashMonitorService`, which runs as a foreground service.
-2.  **Sensor Monitoring**: The service initializes the `CrashDetector`, which registers a listener for the device's accelerometer at a high frequency (`SENSOR_DELAY_GAME`).
-3.  **Impact Detection**: The `CrashDetector` continuously calculates the total G-force. If the force exceeds the pre-defined threshold (`CRASH_G_FORCE_THRESHOLD`), it triggers the `onCrashDetected` callback.
-4.  **Countdown Sequence**: The service starts a 10-second countdown, updates the main activity UI to a warning state, and plays a loud alert tone.
-5.  **User Intervention**: During the countdown, the user can press the "I'M SAFE (CANCEL)" button on the screen to abort the emergency alert.
-6.  **Crash Confirmation**: If the countdown completes without being canceled, the crash is confirmed.
-7.  **Alert Dispatch**: The `LocationHelper` fetches the last known GPS coordinates, and the `SmsHelper` sends a formatted SMS message to the emergency contact. The message looks like this: `EMERGENCY: A SEVERE vehicle crash (G-Force: 15.2) has been detected. Location: https://www.google.com/maps?q=lat,lon`
+### 2) SOC Dashboard (`dashboard/`)
 
-## 🛠️ Tech Stack & Dependencies
+Features:
+- Subscribes to Firebase `reported_accidents` in real time.
+- Displays:
+  - total incidents
+  - max recorded g-force
+  - active alerts count (`SEVERE` + `EXTREME`)
+  - severity distribution bar chart
+  - recent incident table with Google Maps deep links
+- `MapComponent` functionality:
+  - plots latest crash location
+  - discovers nearest hospitals via Places API (within 10 km)
+  - calculates live driving route/ETA via Directions API
+  - allows dispatch selection and logs dispatch records to Firebase `dispatches`
 
--   **Core**: Kotlin
--   **UI**: Jetpack Compose
--   **Asynchronous Programming**: Native Threads for the countdown sequence.
--   **Android Components**: `Service`, `BroadcastReceiver`, `SensorManager`, `NotificationManager`.
--   **Location**: Google Play Services Location (`com.google.android.gms:play-services-location`).
--   **UI Icons**: Material Icons Extended (`androidx.compose.material:material-icons-extended`).
+Main files:
+- `src/App.jsx`: live dashboard analytics + incident table
+- `src/MapComponent.jsx`: map, hospital discovery, routing, dispatch workflow
+- `src/firebase.js`: dashboard Firebase config
 
-## 📋 Prerequisites
+### 3) ML Pipeline (`ml/`)
 
--   Android Studio Iguana | 2023.2.1 or later
--   Android SDK targeting API 33 or higher
--   A physical Android device with an accelerometer is recommended for accurate testing.
+Provided scripts:
+- `generate_dataset.py`
+  - creates synthetic 3-class crash sequences (`MINOR`, `SEVERE`, `EXTREME`)
+  - outputs `dataset/X.npy` and `dataset/y.npy`
+- `train.py`
+  - trains 1D CNN model on generated windows (`50 x 6` features)
+  - saves Keras model (`models/crash_severity_model.keras`)
+  - exports TFLite model to Android assets (`../app/src/main/assets/model.tflite`)
 
-## 🚀 Installation and Setup
+Model metadata lives at:
+- `app/src/main/assets/model_meta.json`
 
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/your-username/Crash-Detection.git
-    ```
-2.  **Open in Android Studio**:
-    Open the cloned directory as a new project in Android Studio.
-3.  **Set the Emergency Contact**:
-    This is a critical step. The emergency contact number is currently hardcoded for demonstration purposes.
-    -   Navigate to `app/src/main/java/com/example/crashdetection/MainActivity.kt`.
-    -   In the `onCreate` method, find the line: `ContactStore.save(this, "8075459692")`.
-    -   **Replace `"8075459692"` with the desired emergency phone number.**
-4.  **Build and Run**:
-    Let Gradle sync the dependencies, then build and run the app on your Android device or emulator.
+## Setup
 
-## 📱 Usage
+### 1) Android App
 
-1.  Launch the app for the first time.
-2.  The app will immediately request necessary permissions (SMS, Location, Notifications). You must **grant all permissions** for the app to function correctly.
-3.  You will also be prompted to grant background location access. For the app to be able to get your location during a crash when the app is not open, you must select **"Allow all the time"**.
-4.  Once permissions are granted, the service starts, and the main screen will show "System Active" and "Monitoring for crashes...".
-5.  The app is now active. It can be closed, and the monitoring will continue in the background. A persistent notification will indicate that the `CrashMonitorService` is running.
+Prerequisites:
+- Android Studio (API 34 compile SDK, min SDK 33)
+- Physical Android device recommended (sensor + SMS testing)
 
-## ⚠️ Permissions Required
+Run:
+1. Open project in Android Studio.
+2. Ensure emergency number is set in `MainActivity`:
+   - `ContactStore.save(this, "9562153025")`
+3. Grant runtime permissions on first launch:
+   - SMS
+   - Fine/Coarse location
+   - Notifications
+   - Background location
+4. Start app and keep foreground service active.
 
-This app requires several sensitive permissions to perform its core functions:
+### 2) Dashboard
 
-| Permission                         | Reason                                                                                   |
-| ---------------------------------- | ---------------------------------------------------------------------------------------- |
-| `SEND_SMS`                         | To send the emergency alert SMS to your contact.                                         |
-| `ACCESS_FINE_LOCATION`             | To get the precise GPS coordinates to include in the alert message.                      |
-| `ACCESS_COARSE_LOCATION`           | To get an approximate location if fine location is unavailable.                          |
-| `ACCESS_BACKGROUND_LOCATION`       | **Crucial**: To fetch the location for the alert even if the app is not on screen.       |
-| `POST_NOTIFICATIONS`               | To show the persistent notification for the foreground service and display crash alerts. |
-| `FOREGROUND_SERVICE`               | To allow the monitoring service to run continuously in the background.                   |
-| `FOREGROUND_SERVICE_SPECIAL_USE`   | Required for safety-critical applications running in the foreground.                     |
-| `HIGH_SAMPLING_RATE_SENSORS`       | To get accelerometer data at a high frequency for accurate detection.                    |
-| `WAKE_LOCK`                        | To ensure the sensor processing continues when the phone screen is turned off.           |
-| `USE_FULL_SCREEN_INTENT`           | To wake the device and show the countdown screen immediately after a potential crash.    |
+Prerequisites:
+- Node.js 18+
+- Google Maps JavaScript API key with Places + Directions + Geometry enabled
 
-## 🧪 Testing
+Run:
+```bash
+cd dashboard
+npm install
+npm run dev
+```
 
-The project includes boilerplate unit and instrumentation tests from the Android Studio new project template.
+Environment:
+- Set `VITE_GOOGLE_MAPS_API_KEY` for map features.
+- Firebase credentials are currently hardcoded in `dashboard/src/firebase.js`.
 
--   `ExampleUnitTest.kt`: Basic local unit tests.
--   `ExampleInstrumentedTest.kt`: Basic on-device instrumentation tests.
+### 3) ML Training
 
-**Note**: Dedicated tests for the core crash detection logic, service lifecycle, and permission handling have not yet been implemented.
+```bash
+cd ml
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python generate_dataset.py
+python train.py
+```
 
-## 🖼️ Screenshots
+## Firebase Data Model
 
-*(Screenshots have not been added yet. This section is a placeholder.)*
+Realtime Database paths used by this repo:
+- `reported_accidents/{id}`
+  - `timestamp`
+  - `maxG`
+  - `severity`
+  - `latitude`
+  - `longitude`
+- `dispatches/{id}`
+  - crash info
+  - selected hospital info
+  - ETA/distance
+  - `dispatchedAt`
 
-## 🚀 Future Improvements
+## Permissions Used by Android App
 
-This project has a solid foundation, but there are many opportunities for enhancement:
+- `FOREGROUND_SERVICE`
+- `FOREGROUND_SERVICE_SPECIAL_USE`
+- `POST_NOTIFICATIONS`
+- `HIGH_SAMPLING_RATE_SENSORS`
+- `WAKE_LOCK`
+- `USE_FULL_SCREEN_INTENT`
+- `SEND_SMS`
+- `ACCESS_FINE_LOCATION`
+- `ACCESS_COARSE_LOCATION`
+- `ACCESS_BACKGROUND_LOCATION`
 
--   **Contact Management UI**: Build a settings screen where users can add, edit, and remove emergency contacts directly within the app, removing the need to hardcode the number.
--   **Contact Picker Integration**: Allow users to select a contact directly from their phone's address book.
--   **Adjustable Sensitivity**: Add a setting to adjust the G-force threshold to better suit different vehicles or user preferences.
--   **Emergency Call**: Add a button to directly call emergency services (e.g., 911, 112) after a crash is confirmed.
--   **Advanced Algorithm**: Incorporate other sensors like the gyroscope and magnetometer to create a more robust crash detection algorithm that can reduce false positives (e.g., by detecting a sudden stop followed by a roll).
--   **Localization**: Add support for multiple languages.
+## Important Notes
 
-## 🙌 How to Contribute
+- `FirebaseLogger.kt` contains placeholder constants:
+  - `API_KEY = "REPLACE_WITH_FIREBASE_API_KEY"`
+  - `APPLICATION_ID = "REPLACE_WITH_FIREBASE_APP_ID"`
+  Replace these for reliable Android-side Firebase writes.
+- `com.google.gms.google-services` is declared in `app/build.gradle.kts` with `apply false`; if you want automatic Firebase Android config, apply it normally in the app module.
+- Emergency contact is hardcoded in `MainActivity` during startup.
+- Automated tests are currently template-level only; crash detection and service workflows are not covered by dedicated tests.
 
-Contributions are welcome! If you have ideas for new features or improvements, please follow these steps:
+## Quick Simulation (Android)
 
-1.  Fork the Project.
-2.  Create your Feature Branch (`git checkout -b feature/AmazingFeature`).
-3.  Commit your Changes (`git commit -m 'Add some AmazingFeature'`).
-4.  Push to the Branch (`git push origin feature/AmazingFeature`).
-5.  Open a Pull Request.
+You can simulate a crash broadcast from ADB:
 
-Please open an issue first to discuss what you would like to change.
+```bash
+adb shell am broadcast -a com.example.crashdetection.SIMULATE_CRASH --ef maxG 14.2 --es severity SEVERE
+```
 
-## 📄 License
-
-This project is distributed under the MIT License. See `LICENSE` for more information. (Note: A `LICENSE` file has not yet been added to the repository).
-
-## 🙏 Credits & Acknowledgements
-
--   This project was created to serve as a practical example of using Android services and sensors for a real-world safety application.
--   Inspiration from various vehicle safety technologies.
+This triggers Firebase logging path(s) for test data.
