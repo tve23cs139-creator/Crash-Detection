@@ -24,11 +24,12 @@ class CrashMonitorService : Service() {
     private var countdownThread: Thread? = null
     private lateinit var crashDetector: SensorFusionCrashDetector
     private lateinit var locationHelper: LocationHelper
-    private val severityModel = CrashSeverityModel()
+    private lateinit var crashClassifier: CrashClassifier
     private var wakeLock: PowerManager.WakeLock? = null
     private var toneGenerator: ToneGenerator? = null
     private var currentSeverity: String = ""
     private var lastDetectedGForce: Float = 0f
+    private var simulateReceiverRegistered = false
     private val simulateCrashReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action != ACTION_SIMULATE_CRASH) return
@@ -72,20 +73,35 @@ class CrashMonitorService : Service() {
         }
 
         try {
-            severityModel.loadModel(this, "model.tflite")
-            Log.d("CrashService", "TFLite model loaded")
+            crashClassifier = CrashClassifier(this, "model.tflite")
+            Log.d("CrashService", "Crash classifier loaded")
         } catch (e: Exception) {
-            Log.w("CrashService", "TFLite model not available, using rule-based fallback: ${e.message}")
+            Log.e("CrashService", "Failed to load crash classifier", e)
+            stopSelf()
+            return
         }
 
         crashDetector = SensorFusionCrashDetector(
             context = this,
-            impactGThreshold = 5.0f,
-            gyroThresholdRadPerSec = 3.0f,
-            confirmationWindowMs = 300L
-        ) { crashEvent ->
+            impactGThreshold = 5.0f
+        ) { windowEvent ->
+            val predictedClass = runCatching {
+                crashClassifier.predictClass(windowEvent.window)
+            }.onFailure { error ->
+                Log.e("CrashService", "Inference failed", error)
+            }.getOrNull() ?: return@SensorFusionCrashDetector
+
+            if (predictedClass == CLASS_NO_ACCIDENT) {
+                Log.d("CrashService", "Inference result: no_accident")
+                return@SensorFusionCrashDetector
+            }
+
             if (!countdownActive) {
-                startCrashCountdown(crashEvent)
+                val severity = severityFromPrediction(predictedClass)
+                startCrashCountdown(
+                    severity = severity,
+                    peakGForce = windowEvent.peakGForce
+                )
             }
         }
 
@@ -97,12 +113,10 @@ class CrashMonitorService : Service() {
         } else {
             registerReceiver(simulateCrashReceiver, filter)
         }
+        simulateReceiverRegistered = true
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_CANCEL_COUNTDOWN) {
-            cancelCountdown()
-        }
         return START_STICKY
     }
 
@@ -112,11 +126,18 @@ class CrashMonitorService : Service() {
     }
 
     override fun onDestroy() {
-        unregisterReceiver(simulateCrashReceiver)
-        crashDetector.stop()
+        if (simulateReceiverRegistered) {
+            unregisterReceiver(simulateCrashReceiver)
+            simulateReceiverRegistered = false
+        }
+        if (::crashDetector.isInitialized) {
+            crashDetector.stop()
+        }
         stopSound()
         toneGenerator?.release()
-        severityModel.close()
+        if (::crashClassifier.isInitialized) {
+            crashClassifier.close()
+        }
         wakeLock?.let {
             if (it.isHeld) it.release()
         }
@@ -173,7 +194,6 @@ class CrashMonitorService : Service() {
     companion object {
         const val CHANNEL_ID = "crash_monitor_channel"
         const val ACTION_CRASH_UPDATE = "com.example.crashdetection.CRASH_UPDATE"
-        const val ACTION_CANCEL_COUNTDOWN = "com.example.crashdetection.CANCEL_COUNTDOWN"
         const val ACTION_SIMULATE_CRASH = "com.example.crashdetection.SIMULATE_CRASH"
         const val EXTRA_MESSAGE = "extra_message"
         const val EXTRA_COUNTDOWN = "extra_countdown"
@@ -183,35 +203,23 @@ class CrashMonitorService : Service() {
         const val EXTRA_SIM_SEVERITY = "severity"
         private const val MOCK_LATITUDE = 10.79
         private const val MOCK_LONGITUDE = 76.27
+        private const val CLASS_NO_ACCIDENT = 0
     }
 
-    private fun classifySeverity(gForce: Float): String {
+    private fun severityFromPrediction(predictedClass: Int): String {
         return when {
-            gForce >= 25.0f -> "EXTREME"
-            gForce >= 12.0f -> "SEVERE"
-            else -> "MINOR"
+            predictedClass == 1 -> "MINOR"
+            predictedClass == 2 -> "MODERATE"
+            predictedClass == 3 -> "SEVERE"
+            else -> "UNKNOWN"
         }
     }
 
-    private fun mlSeverityOrFallback(event: SensorFusionCrashDetector.CrashEvent): String {
-        return try {
-            val modelInput = severityModel.preprocessSensorWindow(event.samples)
-            when (severityModel.runInference(modelInput)) {
-                CrashSeverityModel.Severity.EXTREME -> "EXTREME"
-                CrashSeverityModel.Severity.SEVERE -> "SEVERE"
-                CrashSeverityModel.Severity.MINOR -> "MINOR"
-            }
-        } catch (e: Exception) {
-            Log.w("CrashService", "Inference failed, using rule severity fallback: ${e.message}")
-            classifySeverity(event.maxGForce)
-        }
-    }
-
-    private fun startCrashCountdown(event: SensorFusionCrashDetector.CrashEvent) {
+    private fun startCrashCountdown(severity: String, peakGForce: Float) {
         countdownActive = true
         countdownSeconds = 10
-        lastDetectedGForce = event.maxGForce
-        currentSeverity = mlSeverityOrFallback(event)
+        lastDetectedGForce = peakGForce
+        currentSeverity = severity
 
         countdownThread = Thread {
             while (countdownSeconds > 0 && countdownActive) {
@@ -300,12 +308,5 @@ class CrashMonitorService : Service() {
 
     private fun stopSound() {
         toneGenerator?.stopTone()
-    }
-
-    fun cancelCountdown() {
-        countdownActive = false
-        stopSound()
-        updateNotification("Crash monitoring active")
-        sendUpdateBroadcast("Monitoring...", -1, false, "")
     }
 }

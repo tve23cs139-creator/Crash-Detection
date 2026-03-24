@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.media.AudioManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -33,8 +32,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -111,12 +108,6 @@ class MainActivity : ComponentActivity() {
                         message = message,
                         countdown = countdown,
                         isConfirmed = isConfirmed,
-                        onCancel = {
-                            val intent = Intent(this, CrashMonitorService::class.java).apply {
-                                action = CrashMonitorService.ACTION_CANCEL_COUNTDOWN
-                            }
-                            startService(intent)
-                        },
                         modifier = Modifier.padding(innerPadding)
                     )
                 }
@@ -177,7 +168,6 @@ fun CrashScreen(
     message: String,
     countdown: Int,
     isConfirmed: Boolean,
-    onCancel: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val backgroundColor by animateColorAsState(
@@ -259,18 +249,6 @@ fun CrashScreen(
                         )
                     }
                     
-                    Spacer(modifier = Modifier.height(48.dp))
-                    
-                    Button(
-                        onClick = onCancel,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = Color.Black
-                        ),
-                        modifier = Modifier.height(56.dp).fillMaxWidth()
-                    ) {
-                        Text("I'M SAFE (CANCEL)", fontWeight = FontWeight.Bold)
-                    }
                 }
             }
         }

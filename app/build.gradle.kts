@@ -9,7 +9,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.example.crashdetection"
+        applicationId = "com.example.crashdetection.v2"
         minSdk = 33
         targetSdk = 34
         versionCode = 1
@@ -57,9 +57,8 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     
     implementation("com.google.android.gms:play-services-location:21.3.0")
-    implementation("com.google.android.gms:play-services-tflite-java:16.0.1")
-    implementation("com.google.android.gms:play-services-tflite-support:16.0.1")
-    
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")
+    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.16.1")
     // Firebase Realtime Database
     implementation("com.google.firebase:firebase-database-ktx:21.0.0")
     testImplementation(libs.junit)
